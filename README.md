@@ -37,4 +37,4 @@
 ## Як користуватись
 1. Клонуйте репозиторій:
    ```bash
-   git clone https://github.com/yourusername/system-analysis-labs.git
+   https://github.com/Mark20005/Labs_SA.git
