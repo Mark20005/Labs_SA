@@ -1,4 +1,3 @@
-import os   # for clearing the console
 import numpy as np
 
 # function to print the matrix with alternative names
@@ -31,7 +30,6 @@ def normalize_matrix(matrix, criteria):
         return False
 
 while True:
-    os.system('cls' if os.name == 'nt' else 'clear')
     # -------------- Menu --------------
     task = int(input('Enter the task number: '))
     if task == 1:
@@ -115,6 +113,5 @@ while True:
     elif task == 0:
         break
     else:
-        os.system('cls' if os.name == 'nt' else 'clear')
         print('Invalid task number!')
         input()
