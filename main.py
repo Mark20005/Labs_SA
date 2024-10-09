@@ -1,7 +1,7 @@
 labs = {
     1: "Lab_1/menu.py",
     2: "Lab_2/Lab_2.py",
-    3: "Lab_3/Lab_3.py",
+    3: "Lab_3/menu.py",
     4: "Lab_4/Lab_4.py"
 }
 
@@ -16,7 +16,7 @@ try:
     choose = int(input('Choose your lab (1-4): '))
 
     if choose in labs:
-        with open(labs[choose], "r") as file:
+        with open(labs[choose], "r", encoding='UTF-8') as file:
             code = file.read()
             exec(code)
     else:

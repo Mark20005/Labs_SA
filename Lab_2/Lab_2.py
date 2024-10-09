@@ -122,7 +122,7 @@ def show_global(df):
 
 show_global(global_df)
 
-# Дані для прикладу
+
 labels = ['K1 - Price', 'K2 - Quality', 'K3 - Brand', 'K4 - Functionality', 'K5 - Ergonomics', 'K6 - Reliability', 'K7 - Safety', 'Global']
 
 # Кількість змінних
