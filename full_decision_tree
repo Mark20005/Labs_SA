@@ -1,0 +1,69 @@
+digraph "Investment Decision Tree" {
+	node [color=lightblue fontname=Helvetica fontsize=10 shape=box style=filled]
+	Q [label="Чекати чи ні?
+(Імовірність: 1)"]
+	N [label="Не чекати
+Оцінка: 212500
+Імовірність: 1"]
+	Q -> N [label="Не чекати"]
+	L [label="Великий завод
+Вартість: 600000
+Очикуваний прибуток: 200000
+Імовірність: 0.7"]
+	L_N [label="Великий завод
+Вартість: 600000
+Очикуваний прибуток: -850000
+Імовірність: 0.3"]
+	M [label="Малий завод
+Вартість: 350000
+Очикуваний прибуток: 400000
+Імовірність: 0.7"]
+	M_N [label="Малий завод
+Вартість: 350000
+Очикуваний прибуток: -225000
+Імовірність: 0.3"]
+	N -> L [label="Великий"]
+	N -> L_N [label="Великий (негативний)"]
+	N -> M [label="Малий"]
+	N -> M_N [label="Малий (негативний)"]
+	W [label="Чекати
+Оцінка: 244000
+Імовірність: 1"]
+	Q -> W [label="Чекати"]
+	P [label="Позитивні прогнози
+Оцінка: 280000
+Імовірність: 0.8"]
+	W -> P [label="Позитивні"]
+	L_P [label="Великий завод
+Очикуваний прибуток: 400000
+Імовірність: 0.9"]
+	M_P [label="Малий завод
+Очикуваний прибуток: 250000
+Імовірність: 0.9"]
+	P -> L_P [label="Великий"]
+	P -> M_P [label="Малий"]
+	NP [label="Негативні прогнози
+Оцінка: 100000
+Імовірність: 0.2"]
+	W -> NP [label="Негативні"]
+	L_NP [label="Великий завод
+Очикуваний прибуток: 40000
+Імовірність: 0.1"]
+	M_NP [label="Малий завод
+Очикуваний прибуток: -250000
+Імовірність: 0.1"]
+	NP -> L_NP [label="Великий"]
+	NP -> M_NP [label="Малий"]
+	node [fontname=Helvetica fontsize=10 shape=box style=filled]
+	L [color=lightcoral]
+	M [color=lightgreen]
+	W [color=lightyellow]
+	P [color=lightblue]
+	NP [color=lightgrey]
+	L_P [color=lightcoral]
+	M_P [color=lightgreen]
+	L_N [color=lightcoral]
+	M_N [color=lightgreen]
+	L_NP [color=lightcoral]
+	M_NP [color=lightgreen]
+}

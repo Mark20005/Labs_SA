@@ -1,0 +1,35 @@
+digraph {
+	node [fontname=Helvetica fontsize=12 shape=box style=filled]
+	edge [fontname=Helvetica fontsize=10]
+	A [label="Вибір" fillcolor=lightblue]
+	B [label="Не чекати
+Цільова функція: 520000.00" fillcolor=lightgreen]
+	C [label="Чекати
+Цільова функція: 641000.00" fillcolor=lightyellow]
+	D1 [label="Великий завод
+Прибуток: 520000.00" fillcolor=lightcoral]
+	D2 [label="Малий завод
+Прибуток: 437500.00" fillcolor=lightcoral]
+	E1 [label="Позитивні прогнози
+Великий завод
+Прибуток: 720000.00" fillcolor=lightgreen]
+	E2 [label="Малий завод
+Прибуток: 475000.00" fillcolor=lightgreen]
+	F1 [label="Негативні прогнози
+Великий завод
+Прибуток: 360000.00" fillcolor=lightcoral]
+	F2 [label="Малий завод
+Прибуток: 325000.00" fillcolor=lightcoral]
+	G [label="Не будувати нічого
+Прибуток: 0" fillcolor=lightgray]
+	A -> B [label="Обрати"]
+	A -> C [label="Обрати"]
+	B -> D1 [label="Вибрати великий"]
+	B -> D2 [label="Вибрати малий"]
+	C -> E1 [label="Позитивний прогноз"]
+	C -> E2 [label="Позитивний прогноз"]
+	C -> F1 [label="Негативний прогноз"]
+	C -> F2 [label="Негативний прогноз"]
+	F1 -> G [label="Не прибутковий"]
+	F2 -> G [label="Не прибутковий"]
+}

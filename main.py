@@ -2,7 +2,7 @@ labs = {
     1: "Lab_1/menu.py",
     2: "Lab_2/Lab_2.py",
     3: "Lab_3/menu.py",
-    4: "Lab_4/Lab_4.py"
+    4: "Lab_4/lab4/lab4.py"
 }
 
 print('------ Labs ------')
