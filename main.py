@@ -2,7 +2,8 @@ labs = {
     1: "Lab_1/menu.py",
     2: "Lab_2/Lab_2.py",
     3: "Lab_3/menu.py",
-    4: "Lab_4/lab4/lab4.py"
+    4: "Lab_4/lab4/lab4.py",
+    5: "Lab_5/menu.py"
 }
 
 print('------ Labs ------')
@@ -10,10 +11,11 @@ print('1. Lab 1')
 print('2. Lab 2')
 print('3. Lab 3')
 print('4. Lab 4')
+print('5. Lab 5')
 
 try:
     # Отримання вибору користувача
-    choose = int(input('Choose your lab (1-4): '))
+    choose = int(input('Choose your lab (1-5): '))
 
     if choose in labs:
         with open(labs[choose], "r", encoding='UTF-8') as file:
