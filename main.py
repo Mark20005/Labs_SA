@@ -3,7 +3,9 @@ labs = {
     2: "Lab_2/Lab_2.py",
     3: "Lab_3/menu.py",
     4: "Lab_4/lab4/lab4.py",
-    5: "Lab_5/menu.py"
+    5: "Lab_5/menu.py",
+    6: "Lab_6/lab_6.py"
+
 }
 
 print('------ Labs ------')
@@ -12,6 +14,7 @@ print('2. Lab 2')
 print('3. Lab 3')
 print('4. Lab 4')
 print('5. Lab 5')
+print('5. Lab 6')
 
 try:
     # Отримання вибору користувача
