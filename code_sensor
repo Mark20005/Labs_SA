@@ -1,0 +1,102 @@
+import os
+import sys
+from datetime import timedelta
+from airflow import DAG
+from airflow.sensors.http_sensor import HttpSensor
+from airflow.operators.python import PythonOperator
+from airflow.operators.branch import BranchPythonOperator
+from airflow.operators.email import EmailOperator
+from airflow.utils.dates import days_ago
+from airflow.timetables.interval import CronDataIntervalTimetable
+import logging
+from gov_sanctions.api_gov_sanctions import download_sanctions, save_decree_to_s3, new_sanctions_checker, get_last_decree_from_s3
+
+def decide_to_download_sanctions(**context):
+    """Decide if sanctions should be downloaded based on the HTTP Sensor result."""
+    task_instance = context['task_instance']
+    sensor_result = task_instance.xcom_pull(task_ids='check_new_sanctions')
+
+    if sensor_result:  # If new sanctions are detected
+        logging.info("New sanctions found. Proceeding with download.")
+        return 'download_sanctions_task'
+    else:
+        logging.info("No new sanctions found. Skipping download.")
+        return 'skip_task'
+
+def skip_task():
+    logging.info("Skipping further tasks as no new sanctions are detected.")
+
+# Default arguments for the DAG
+default_args = {
+    "owner": "airflow",
+    "depends_on_past": False,
+    "email_on_failure": True,
+    "email_on_retry": True,
+    "retries": 0,
+    "retry_delay": timedelta(minutes=5),
+}
+
+with DAG(
+    dag_id='dag_http_sensor_sanctions',
+    default_args=default_args,
+    catchup=False,
+    start_date=days_ago(2),
+    timetable=CronDataIntervalTimetable(
+        cron='*/30 * * * *',
+        timezone='Europe/Kiev'
+    ),
+    tags=["s3", "airflow", "sanctions"],
+) as dag:
+
+    # HTTP Sensor to check for new sanctions
+    check_new_sanctions = HttpSensor(
+        task_id='check_new_sanctions',
+        http_conn_id='sanctions_api',
+        endpoint='actions/new-decrees',
+        request_params={"baseDecree": get_last_decree_from_s3()},
+        headers={"accept": "application/json", "x-cota-public-api-key": os.environ.get('API_KEY')},
+        response_check=lambda response: response.json().get('hasNewActions', False),
+        poke_interval=600,
+        timeout=3600
+    )
+
+    # Decide whether to proceed with downloading sanctions
+    decide_download_task = BranchPythonOperator(
+        task_id='decide_download_task',
+        python_callable=decide_to_download_sanctions,
+        provide_context=True
+    )
+
+    # Task to download new sanctions
+    def download_sanctions_task():
+        decree_main = get_last_decree_from_s3()
+        _, last_decree = new_sanctions_checker('https://api-drs.nsdc.gov.ua/actions', decree_main)
+        download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'individual')
+        download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'legal')
+        save_decree_to_s3(last_decree)
+
+    download_sanctions_task = PythonOperator(
+        task_id='download_sanctions_task',
+        python_callable=download_sanctions_task
+    )
+
+    # Task to skip if no new sanctions
+    skip_task = PythonOperator(
+        task_id='skip_task',
+        python_callable=skip_task
+    )
+
+    # Email notification for new sanctions
+    send_email = EmailOperator(
+        task_id='send_email',
+        to=['your_email@example.com'],
+        subject='New sanctions detected',
+        html_content="""
+            <h3>New sanctions detected</h3>
+            <p>Please review the downloaded sanctions in the S3 bucket.</p>
+        """
+    )
+
+    # Task dependencies
+    check_new_sanctions >> decide_download_task >> [download_sanctions_task, skip_task]
+    download_sanctions_task >> send_email
