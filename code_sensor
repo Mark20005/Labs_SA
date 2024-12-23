@@ -1,15 +1,17 @@
-import json
+import os
+import pathlib
 from datetime import timedelta
 from airflow import DAG
 from airflow.sensors.http_sensor import HttpSensor
-from airflow.providers.http.operators.http import SimpleHttpOperator, HttpOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.email import EmailOperator
 from airflow.utils.dates import days_ago
 from airflow.timetables.interval import CronDataIntervalTimetable
-import logging
-from gov_sanctions.api_gov_sanctions import download_sanctions, save_decree_to_s3, get_last_decree_from_s3, get_api_key
+from gov_sanctions.api_gov_sanctions import get_last_decree, download_sanctions, save_decree_to_s3, get_last_decree_from_s3, api_key
+from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 
+dags_folder = pathlib.Path(__file__).parent.resolve()
+env = os.environ.get('ENV')
 
 # Default arguments for the DAG
 default_args = {
@@ -19,10 +21,13 @@ default_args = {
     "email_on_retry": True,
     "retries": 0,
     "retry_delay": timedelta(minutes=5),
+    "workgroup": f'rbua-data-{env}-data-fcmd',
+    "s3_bucket": f'rbua-data-{env}-integration-data-fcmd',
+    'database': f'rbua_data_{env}_product_data_fcmd'
 }
 
 with DAG(
-        dag_id='dag_http_sensor_sanctions',
+        dag_id='dag_api_gov_sanctions',
         default_args=default_args,
         catchup=False,
         start_date=days_ago(2),
@@ -39,31 +44,20 @@ with DAG(
         http_conn_id='selfmanaged_api_gov',
         endpoint='actions/new-decrees',
         request_params={"baseDecree": get_last_decree_from_s3()},
-        headers={"accept": "application/json", "x-cota-public-api-key": f'{get_api_key()}'},
+        headers={"accept": "application/json", "x-cota-public-api-key": f'{api_key}'},
         response_check=lambda response: response.json().get('hasNewActions', False),
         poke_interval=30,
-        timeout=120
-    )
-
-    get_last_decree_from_api = HttpOperator(
-        task_id='get_last_decree',
-        http_conn_id='selfmanaged_api_gov',
-        endpoint='actions/new-decrees',
-        method='GET',
-        data={"baseDecree": get_last_decree_from_s3()},
-        headers={"accept": "application/json", "x-cota-public-api-key": f'{get_api_key()}'},
-        log_response=True,
-        response_filter=lambda response: response.json()['lastDecree'],
-        do_xcom_push=True,
+        timeout=120,
+        dag=dag
     )
 
     # Task to download new sanctions
-    def download_sanctions_task(**kwargs):
-        last_decree = json.loads(kwargs['task_instance'].xcom_pull(task_ids='get_last_decree'))
-        logging.info(f'data is {last_decree}')
-        download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'individual')
-        download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'legal')
+    def download_sanctions_task() -> tuple:
+        last_decree = get_last_decree('https://api-drs.nsdc.gov.ua/actions', get_last_decree_from_s3())
+        response_pi = download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'individual')
+        response_le = download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'legal')
         save_decree_to_s3(last_decree)
+        return response_pi, response_le
 
     download_sanctions_task = PythonOperator(
         task_id='download_sanctions_task',
@@ -73,13 +67,262 @@ with DAG(
     # Email notification for new sanctions
     send_email = EmailOperator(
         task_id='send_email',
-        to=['your_email@example.com'],
-        subject='New sanctions detected',
-        html_content="""
+        to=['airflow@example.com'],
+        subject='New sanctions detected ',
+        html_content=f"""
             <h3>New sanctions detected</h3>
-            <p>Please review the downloaded sanctions in the S3 bucket.</p>
+            <p>Please review the downloaded sanctions in the S3 bucket. </p>
+            <p>Decree of sanctions is {get_last_decree_from_s3()}</p>    
         """
     )
 
+    create_iceberg_table_pi_sql = f"""
+        CREATE TABLE IF NOT EXISTS rbua_data_{env}_integration_data_fcmd.sanctions_individual_new (
+            id bigint comment 'ID',
+            action_type string comment 'Action type',
+            decree string comment 'Decree of sanctions',
+            decree_date date comment 'Date',
+            decree_appendix int comment 'Decree appendix',
+            position_in_appendix int comment 'Position in appendix',
+            appendix_link string comment 'Link of appendix',
+            sid int comment 'Sid',
+            name string comment 'Name of person',
+            translit_name string comment 'Translated name',
+            aliases string comment 'Aliases of name',
+            birthdate date comment 'Birthdate of person',
+            citizenship string comment 'Citizenship',
+            identity_docs string comment 'Docs',
+            reg_id string comment 'Registration',
+            tax_id string comment 'Tax',
+            additional_info string comment 'Info',
+            sanctions string comment 'Sanctions',
+            sanctions_term string comment 'Term',
+            sanctions_end_date string comment 'Sanctions end date',
+            affected_decree string comment 'Affected decree',
+            affected_decree_date string comment 'Affected decree date',
+            affected_appendix string comment 'Affected appendix',
+            affected_appendix_link string comment 'Appendix link'
+        )
+        PARTITIONED BY (decree)
+        LOCATION 's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/individual/'
+        TBLPROPERTIES (
+            'table_type'='ICEBERG',
+            'format'='parquet'
+        );
+    """
+
+    create_iceberg_table_le_sql = f"""
+        CREATE TABLE IF NOT EXISTS rbua_data_{env}_integration_data_fcmd.sanctions_legal (
+            id bigint comment 'ID',
+            action_type string comment 'Action type',
+            decree string comment 'Decree of sanctions',
+            decree_date date comment 'Date',
+            decree_appendix int comment 'Decree appendix',
+            position_in_appendix int comment 'Position in appendix',
+            appendix_link string comment 'Link of appendix',
+            sid int comment 'Sid',
+            name string comment 'Name of person',
+            translit_name string comment 'Translated name',
+            aliases string comment 'Aliases of name',
+            country string comment 'Country',
+            reg_id string comment 'Registration',
+            tax_id string comment 'Tax',
+            additional_info string comment 'Info',
+            sanctions string comment 'Sanctions',
+            sanctions_term string comment 'Term',
+            sanctions_end_date string comment 'Sanctions end date',
+            affected_decree string comment 'Affected decree',
+            affected_decree_date date comment 'Affected decree date',
+            affected_appendix string comment 'Affected appendix',
+            affected_appendix_link string comment 'Appendix link'
+        )
+        PARTITIONED BY (decree)
+        LOCATION 's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/legal/'
+        TBLPROPERTIES (
+            'table_type'='ICEBERG',
+            'format'='parquet'
+        );
+    """
+
+
+    create_iceberg_table_pi_task = AthenaOperator(
+        task_id='create_iceberg_table_pi',
+        task_display_name="create pi_sanctions product table",
+        query=create_iceberg_table_pi_sql,
+        default_args=default_args,
+        dag=dag,
+        execution_timeout=timedelta(minutes=2)
+    )
+
+    create_iceberg_table_le_task = AthenaOperator(
+        task_id='create_iceberg_table_le',
+        task_display_name="create le_sanctions product table",
+        query=create_iceberg_table_le_sql,
+        default_args=default_args,
+        dag=dag,
+        execution_timeout=timedelta(minutes=2)
+    )
+
+
     # Task dependencies
-    check_new_sanctions >> get_last_decree_from_api >> download_sanctions_task >> send_email
+    create_iceberg_table_pi_task >> create_iceberg_table_le_task >> check_new_sanctions >> download_sanctions_task >> send_email
+
+
+Script
+
+import requests
+import pandas as pd
+import io
+import os
+import logging
+import json
+import boto3
+from airflow.models import Variable
+import awswrangler as wr
+#Logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s -%(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+env = os.environ.get('ENV')
+export_format: str = 'xlsx'
+url_main: str = f'https://api-drs.nsdc.gov.ua/actions'
+BUCKET_NAME = f'rbua-data-{env}-integration-data-fcmd'
+OBJECT_KEY = 'MarkKUCHYK/Sanctions/decree.json'
+s3 = boto3.client('s3')
+api_key = Variable.get("selfmanaged_api_gov")
+
+headers: dict = {'accept': 'text/csv',
+                 'x-cota-public-api-key': f'{api_key}'}
+
+def save_decree_to_s3(decree, bucket=BUCKET_NAME, key=OBJECT_KEY):
+    data = []
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        file_content = response['Body'].read().decode('utf-8')
+        data = json.loads(file_content)
+    except s3.exceptions.NoSuchKey:
+        pass
+    except json.JSONDecodeError:
+        pass
+    data.append(decree)
+
+    s3.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=json.dumps(data, indent=4)
+    )
+
+def get_last_decree_from_s3(bucket=BUCKET_NAME, key=OBJECT_KEY):
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        file_content = response['Body'].read().decode('utf-8')
+        data = json.loads(file_content)
+
+        return data[-1] if data else None
+    except s3.exceptions.NoSuchKey:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+def get_last_decree(url: str, decree: str) -> str:
+    response_check = requests.get(f'{url}/new-decrees?baseDecree={decree}',headers=headers)
+    if response_check.status_code == 200:
+        data = response_check.json()
+        last_decree = data['lastDecree']
+        return last_decree
+    else:
+        logging.error(f'Error {response_check.status_code}')
+
+def download_sanctions(url:str, decree: str, subject: str):
+    response = requests.get(f'{url}/export/{subject}/{export_format}?decree={decree}',headers=headers)
+
+    if response.status_code == 200:
+        excel_data = (io.BytesIO(response.content))
+        df = pd.read_excel(excel_data, na_values='NULL')
+        df['sanctions'] = df['sanctions'].str.replace(';', '/')
+        if df.empty:
+            logging.warning(f'file is empty for {subject}\'s with decree {decree} ')
+            return f'There are no sanctions for {subject} persons'
+        else:
+            if subject == 'individual':
+                df = df.astype({
+                    'id': 'int64',
+                    'action_type': 'string',
+                    'decree': 'string',
+                    'decree_date': 'string',
+                    'decree_appendix': 'int32',
+                    'position_in_appendix': 'int32',
+                    'appendix_link': 'string',
+                    'sid': 'int32',
+                    'name': 'string',
+                    'translit_name': 'string',
+                    'aliases': 'string',
+                    'birthdate': 'string',
+                    'citizenship': 'string',
+                    'identity_docs': 'string',
+                    'reg_id': 'string',
+                    'tax_id': 'string',
+                    'additional_info': 'string',
+                    'sanctions': 'string',
+                    'sanctions_term': 'string',
+                    'sanctions_end_date': 'string',
+                    'affected_decree': 'string',
+                    'affected_decree_date': 'string',
+                    'affected_appendix': 'string',
+                    'affected_appendix_link': 'string'
+                })
+                wr.athena.to_iceberg(
+                    df=df,
+                    database=f'rbua_data_{env}_integration_data_fcmd',
+                    table=f'sanctions_individual',
+                    temp_path=f's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/individual/temp',
+                    workgroup=f'rbua-data-{env}-data-fcmd',
+                    dtype={"decree_date": "date", "birthdate": "date"}
+                )
+                logging.info(f'successfully download {subject} sanctions with decree {decree} ')
+            else:
+                df = df.astype({
+                    'id': 'int64',
+                    'action_type': 'string',
+                    'decree': 'string',
+                    'decree_date': 'string',
+                    'decree_appendix': 'int32',
+                    'position_in_appendix': 'int32',
+                    'appendix_link': 'string',
+                    'sid': 'int32',
+                    'name': 'string',
+                    'translit_name': 'string',
+                    'aliases': 'string',
+                    'country': 'string',
+                    'reg_id': 'string',
+                    'tax_id': 'string',
+                    'additional_info': 'string',
+                    'sanctions': 'string',
+                    'sanctions_term': 'string',
+                    'sanctions_end_date': 'string',
+                    'affected_decree': 'string',
+                    'affected_decree_date': 'string',
+                    'affected_appendix': 'string',
+                    'affected_appendix_link': 'string'
+                })
+                wr.athena.to_iceberg(
+                    df=df,
+                    database=f'rbua_data_{env}_integration_data_fcmd',
+                    table=f'sanctions_legal',
+                    temp_path=f's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/legal/temp',
+                    workgroup=f'rbua-data-{env}-data-fcmd',
+                    dtype={"decree_date": "date"}
+                )
+            logging.info(f'successfully download {subject} sanctions with decree {decree} ')
+            return f'There are new sanctions for {subject} persons'
+    else:
+        logging.error(f'error {response.status_code}')
+
+
+
+
