@@ -9,6 +9,7 @@ from airflow.utils.dates import days_ago
 from airflow.timetables.interval import CronDataIntervalTimetable
 from gov_sanctions.api_gov_sanctions import get_last_decree, download_sanctions, save_decree_to_s3, get_last_decree_from_s3, api_key
 from airflow.providers.amazon.aws.operators.athena import AthenaOperator
+import json
 
 dags_folder = pathlib.Path(__file__).parent.resolve()
 env = os.environ.get('ENV')
@@ -52,29 +53,18 @@ with DAG(
     )
 
     # Task to download new sanctions
-    def download_sanctions_task() -> tuple:
+    def download_sanctions_task():
         last_decree = get_last_decree('https://api-drs.nsdc.gov.ua/actions', get_last_decree_from_s3())
-        response_pi = download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'individual')
-        response_le = download_sanctions('https://api-drs.nsdc.gov.ua/actions', last_decree, 'legal')
+        download_sanctions('https://api-drs.nsdc.gov.ua/actions', "796/2024", 'individual')
+        download_sanctions('https://api-drs.nsdc.gov.ua/actions', "796/2024", 'legal')
         save_decree_to_s3(last_decree)
-        return response_pi, response_le
+
 
     download_sanctions_task = PythonOperator(
         task_id='download_sanctions_task',
         python_callable=download_sanctions_task
     )
 
-    # Email notification for new sanctions
-    send_email = EmailOperator(
-        task_id='send_email',
-        to=['airflow@example.com'],
-        subject='New sanctions detected ',
-        html_content=f"""
-            <h3>New sanctions detected</h3>
-            <p>Please review the downloaded sanctions in the S3 bucket. </p>
-            <p>Decree of sanctions is {get_last_decree_from_s3()}</p>    
-        """
-    )
 
     create_iceberg_table_pi_sql = f"""
         CREATE TABLE IF NOT EXISTS rbua_data_{env}_integration_data_fcmd.sanctions_individual_new (
@@ -103,7 +93,7 @@ with DAG(
             affected_appendix string comment 'Affected appendix',
             affected_appendix_link string comment 'Appendix link'
         )
-        PARTITIONED BY (decree)
+        PARTITIONED BY (decree_date)
         LOCATION 's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/individual/'
         TBLPROPERTIES (
             'table_type'='ICEBERG',
@@ -132,11 +122,11 @@ with DAG(
             sanctions_term string comment 'Term',
             sanctions_end_date string comment 'Sanctions end date',
             affected_decree string comment 'Affected decree',
-            affected_decree_date date comment 'Affected decree date',
+            affected_decree_date string comment 'Affected decree date',
             affected_appendix string comment 'Affected appendix',
             affected_appendix_link string comment 'Appendix link'
         )
-        PARTITIONED BY (decree)
+        PARTITIONED BY (decree_date)
         LOCATION 's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/legal/'
         TBLPROPERTIES (
             'table_type'='ICEBERG',
@@ -164,11 +154,98 @@ with DAG(
     )
 
 
+    def prepare_email_content(ti):
+        responses = ti.xcom_pull(task_ids='download_sanctions_task')
+        last_decree, response_pi, response_le = responses
+
+        # HTML-content
+        html_content = f"""
+        <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: Arial, sans-serif;
+                        line-height: 1.6;
+                        background-color: #f9f9f9;
+                        color: #333;
+                    }}
+                    h2 {{
+                        color: #1a73e8;
+                    }}
+                    .container {{
+                        background-color: #ffffff;
+                        border-radius: 8px;
+                        padding: 20px;
+                        margin: 20px auto;
+                        max-width: 600px;
+                        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                    }}
+                    .section {{
+                        margin-bottom: 20px;
+                    }}
+                    .highlight {{
+                        background-color: #e8f0fe;
+                        padding: 10px;
+                        border-radius: 5px;
+                        font-family: monospace;
+                        overflow-x: auto;
+                    }}
+                    .footer {{
+                        font-size: 12px;
+                        text-align: center;
+                        margin-top: 20px;
+                        color: #666;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h2>🔔 New Sanctions Detected</h2>
+                    <div class="section">
+                        <p><strong>Decree of Sanctions:</strong> {last_decree}</p>
+                    </div>
+                    <div class="section">
+                        <h3>Individual Sanctions</h3>
+                        <div class="highlight">
+                            {json.dumps(response_pi, indent=4)}
+                        </div>
+                    </div>
+                    <div class="section">
+                        <h3>Legal Sanctions</h3>
+                        <div class="highlight">
+                            {json.dumps(response_le, indent=4)}
+                        </div>
+                    </div>
+                    <div class="footer">
+                        <p>Generated by Airflow DAG</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        return html_content
+
+    # # Оператор для створення HTML
+    # prepare_email_content_task = PythonOperator(
+    #     task_id='prepare_email_content',
+    #     python_callable=prepare_email_content,
+    #     provide_context=True
+    # )
+    #
+    # # Оператор для відправки мейлу
+    # send_email = EmailOperator(
+    #     task_id='send_email',
+    #     to=['mykhailo.oleksak@raiffeisen.ua'],
+    #     subject='🚨 New Sanctions Detected',
+    #     html_content="{{ task_instance.xcom_pull(task_ids='prepare_email_content') }}",
+    #     dag=dag
+    # )
+
+
     # Task dependencies
-    create_iceberg_table_pi_task >> create_iceberg_table_le_task >> check_new_sanctions >> download_sanctions_task >> send_email
+    create_iceberg_table_pi_task >> create_iceberg_table_le_task >> check_new_sanctions >> download_sanctions_task
 
-
-Script
+script
 
 import requests
 import pandas as pd
@@ -247,7 +324,7 @@ def download_sanctions(url:str, decree: str, subject: str):
         df['sanctions'] = df['sanctions'].str.replace(';', '/')
         if df.empty:
             logging.warning(f'file is empty for {subject}\'s with decree {decree} ')
-            return f'There are no sanctions for {subject} persons'
+            # return f'There are no new sanctions for {subject} persons'
         else:
             if subject == 'individual':
                 df = df.astype({
@@ -279,12 +356,11 @@ def download_sanctions(url:str, decree: str, subject: str):
                 wr.athena.to_iceberg(
                     df=df,
                     database=f'rbua_data_{env}_integration_data_fcmd',
-                    table=f'sanctions_individual',
-                    temp_path=f's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/individual/temp',
+                    table=f'sanctions_individual_new',
+                    temp_path=f's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/temp/individual',
                     workgroup=f'rbua-data-{env}-data-fcmd',
                     dtype={"decree_date": "date", "birthdate": "date"}
                 )
-                logging.info(f'successfully download {subject} sanctions with decree {decree} ')
             else:
                 df = df.astype({
                     'id': 'int64',
@@ -314,111 +390,16 @@ def download_sanctions(url:str, decree: str, subject: str):
                     df=df,
                     database=f'rbua_data_{env}_integration_data_fcmd',
                     table=f'sanctions_legal',
-                    temp_path=f's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/Sanctions/legal/temp',
+                    temp_path=f's3://rbua-data-{env}-integration-data-fcmd/MarkKUCHYK/temp/legal',
                     workgroup=f'rbua-data-{env}-data-fcmd',
                     dtype={"decree_date": "date"}
                 )
             logging.info(f'successfully download {subject} sanctions with decree {decree} ')
-            return f'There are new sanctions for {subject} persons'
+            # return f'There are new sanctions for {subject} persons'
     else:
         logging.error(f'error {response.status_code}')
 
-емаіл
 
-from airflow.operators.email import EmailOperator
-import json
 
-# Функція для створення HTML-контенту
-def prepare_email_content(ti):
-    # Отримуємо значення з XCom
-    responses = ti.xcom_pull(task_ids='download_sanctions_task')
-    response_pi, response_le = responses
-    last_decree = ti.xcom_pull(task_ids='download_sanctions_task', key='last_decree')
-
-    # Формуємо HTML-контент
-    html_content = f"""
-    <html>
-        <head>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    line-height: 1.6;
-                    background-color: #f9f9f9;
-                    color: #333;
-                }}
-                h2 {{
-                    color: #1a73e8;
-                }}
-                .container {{
-                    background-color: #ffffff;
-                    border-radius: 8px;
-                    padding: 20px;
-                    margin: 20px auto;
-                    max-width: 600px;
-                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                }}
-                .section {{
-                    margin-bottom: 20px;
-                }}
-                .highlight {{
-                    background-color: #e8f0fe;
-                    padding: 10px;
-                    border-radius: 5px;
-                    font-family: monospace;
-                    overflow-x: auto;
-                }}
-                .footer {{
-                    font-size: 12px;
-                    text-align: center;
-                    margin-top: 20px;
-                    color: #666;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>🔔 New Sanctions Detected</h2>
-                <div class="section">
-                    <p><strong>Decree of Sanctions:</strong> {last_decree}</p>
-                </div>
-                <div class="section">
-                    <h3>Individual Sanctions</h3>
-                    <div class="highlight">
-                        {json.dumps(response_pi, indent=4)}
-                    </div>
-                </div>
-                <div class="section">
-                    <h3>Legal Sanctions</h3>
-                    <div class="highlight">
-                        {json.dumps(response_le, indent=4)}
-                    </div>
-                </div>
-                <div class="footer">
-                    <p>Generated by Airflow DAG</p>
-                </div>
-            </div>
-        </body>
-    </html>
-    """
-    return html_content
-
-# Оператор для створення HTML
-prepare_email_content_task = PythonOperator(
-    task_id='prepare_email_content',
-    python_callable=prepare_email_content,
-    provide_context=True
-)
-
-# Оператор для відправки мейлу
-send_email = EmailOperator(
-    task_id='send_email',
-    to=['airflow@example.com'],
-    subject='🚨 New Sanctions Detected',
-    html_content="{{ task_instance.xcom_pull(task_ids='prepare_email_content') }}",
-    dag=dag
-)
-
-# Встановлюємо залежності
-download_sanctions_task >> prepare_email_content_task >> send_email
 
 
