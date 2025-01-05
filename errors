@@ -1,4 +1,251 @@
-Цей скрипт на пайспарк одинаковий з цим SQL? ELECT DISTINCT p.cust_id as "cmd_id", p.reg_code as "taxcode", cb.mes as "comment", adr.adress_re, adr.adress_pr, p.name_full as "name_full", p.name_short as "name_short", reg.state_reg_date as "birth/reg", CASE WHEN c.BLOCK = 0 AND c.STATUS = 0 THEN 'Yellow' WHEN c.BLOCK = 0 AND c.STATUS = 10 THEN 'Green' WHEN c.BLOCK = 1 THEN 'Red' ELSE 'N\A' END AS "status_cmd", c.branch as "br_code", zfm.descr as "rel_to_pep", br.UNIT_AVALbranchNAMES as "branch", br.REGION_NAME as "dir", seg.code_business as "seg_code", seg.name as "segment", CASE WHEN c.SUBSEGMENT_ID = 1 THEN 'Business Mass' WHEN c.SUBSEGMENT_ID = 2 THEN 'Business TOP-Mass' WHEN c.SUBSEGMENT_ID = 3 THEN 'Business Premium' WHEN c.SUBSEGMENT_ID = 4 THEN 'Business Direct' ELSE 'N\A' END AS "subsegment", CASE WHEN c.type_id = 1 THEN 'ЮО' WHEN c.type_id = 2 THEN 'ФОП' WHEN c.type_id = 3 THEN 'ФО' WHEN c.type_id = 4 THEN 'Банки' WHEN c.type_id = 6 THEN 'Уряд' ELSE 'N\A' END AS "type", fm.date_last_ident, fm.date_next_ident, case when n.aml = '1' then 'Low' when n.aml = '2' then 'Medium' when n.aml = '3' then 'High' when n.aml = '4' then 'Very High' else '-' end as "risk_cmd", fm.work_place, fm.work_post FROM "rbua_data_dev_curated_cmd"."cmd_profile_legal" as p left join "rbua_data_dev_curated_cmd"."cmd_customer" c on ( p.cust_id = c.id ) left join "rbua_data_dev_curated_cmd"."cmd_cust_segment" seg on (c.segment_id = seg.id) left join Branches_RBA br on (c.branch = br.unit_bmrs_code) left join "rbua_data_dev_curated_cmd"."cmd_fm_finmon" fm on ( p.cust_id = fm.cust_id ) left join "rbua_data_dev_curated_cmd"."cmd_norkom" n on ( p.cust_id = n.cust_id ) LEFT JOIN newest_dates as nd ON c.id = nd.cust_id left join "rbua_data_dev_curated_cmd"."cmd_cust_block" as cb ON ( c.id = cb.cust_id and cb.ctime = nd.max_ctime ) LEFT JOIN adress_dist as adr ON p.cust_id = adr.cust_id LEFT JOIN "rbua_data_dev_curated_cmd"."cmd_z_fm_public" zfm ON fm.public_person = zfm.id left join "rbua_data_dev_curated_cmd"."cmd_reg_data" reg on ( p.cust_id = reg.cust_id ) WHERE p.reg_code not like '0000000%'
+    df_cmd_pe = cmd_profile_person.alias("p") \
+    .join(
+        cmd_customer.alias("c"),
+        f.col("p.cust_id") == f.col("c.id"),
+        "left"
+    ).join(
+        cmd_cust_segment.alias("seg"),
+        f.col("c.segment_id") == f.col("seg.id"),
+        "left"
+    ).join(
+        branches_rba.alias("br"),
+        f.col("c.branch") == f.col("br.unit_bmrs_code_c"),
+        "left"
+    ).join(
+        cmd_fm_finmon.alias("fm"),
+        f.col("p.cust_id") == f.col("fm.cust_id"),
+        "left"
+    ).join(
+        cmd_norkom.alias("n"),
+        f.col("p.cust_id") == f.col("n.cust_id"),
+        "left"
+    ).join(
+        newest_dates.alias("nd"),
+        f.col("p.cust_id") == f.col("nd.cust_id"),
+        "left"
+    ).join(
+        cmd_cust_block.alias("cb"),
+        (f.col("c.id") == f.col("cb.cust_id")) &
+        (f.col("cb.ctime") == f.col("nd.max_ctime")),
+        "left"
+    ).join(
+        addresses.alias("adr"),
+        f.col("p.cust_id") == f.col("adr.cust_id"),
+        "left"
+    ).join(
+        cmd_z_fm_public.alias("zfm"),
+        f.col("fm.public_person") == f.col("zfm.id"),
+        "left"
+    ).where(
+        ~f.col("p.taxcode").like("0000000%")
+    ).select(
+        f.col("p.cust_id").alias("cmd_id"),
+        f.col("p.taxcode"),
+        f.col("cb.mes").alias("comment"),
+        f.col("adr.address_re"),
+        f.col("adr.address_pr"),
+        f.concat(
+            f.col("p.surname"),
+            f.lit(" "),
+            f.col("p.name"),
+            f.lit(" "),
+            f.col("p.second_name")
+        ).alias("full_name"),
+        f.col("p.name_short").alias("short_name"),
+        f.col("p.birth_date"),
+        f.when(
+            (f.col("c.BLOCK") == 0) & (f.col("c.STATUS") == 0),
+            "Yellow"
+        ).when(
+            (f.col("c.BLOCK") == 0) & (f.col("c.STATUS") == 10),
+            "Green"
+        ).when(
+            f.col("c.BLOCK") == 1,
+            "Red"
+        ).otherwise(
+            "N/A"
+        ).alias("status_cmd"),
+        f.col("c.branch").alias("br_code"),
+        f.col("zfm.descr").alias("rel_to_pep"),
+        f.col("br.UNIT_AVALbranchNAMES").alias("branch"),
+        f.col("br.REGION_NAME").alias("dir"),
+        f.col("seg.code_business").alias("seg_code"),
+        f.col("seg.name").alias("segment"),
+        f.when(
+            f.col("c.SUBSEGMENT_ID") == 1,
+            "Business Mass"
+        ).when(
+            f.col("c.SUBSEGMENT_ID") == 2,
+            "Business TOP-Mass"
+        ).when(
+            f.col("c.SUBSEGMENT_ID") == 3,
+            "Business Premium"
+        ).when(
+            f.col("c.SUBSEGMENT_ID") == 4,
+            "Business Direct"
+        ).otherwise(
+            "N/A"
+        ).alias("subsegment"),
+        f.when(
+            f.col("c.type_id") == 1,
+            "ЮО"
+        ).when(
+            f.col("c.type_id") == 2,
+            "ФОП"
+        ).when(
+            f.col("c.type_id") == 3,
+            "ФО"
+        ).when(
+            f.col("c.type_id") == 4,
+            "Банки"
+        ).when(
+            f.col("c.type_id") == 6,
+            "Уряд"
+        ).otherwise(
+            "N/A"
+        ).alias("type"),
+        f.col("fm.date_last_ident"),
+        f.col("fm.date_next_ident"),
+        f.when(
+            f.col("n.aml") == '1',
+            "Low"
+        ).when(
+            f.col("n.aml") == '2',
+            "Medium"
+        ).when(
+            f.col("n.aml") == '3',
+            "High"
+        ).when(
+            f.col("n.aml") == '4',
+            "Very High"
+        ).otherwise(
+            "None"
+        ).alias("risk_cmd"),
+        f.col("fm.work_place"),
+        f.col("fm.work_post")
+    ).distinct()
 
-Pyspark df_cmd_le = spark.table(f"draif.rbua_data_{env}curated_cmd.cmd_profile_legal").alias("p")
-.join( spark.table(f"draif.rbua_data{env}curated_cmd.cmd_customer").alias("c"), f.col("p.cust_id") == f.col("c.id"), "left" ).join( spark.table(f"draif.rbua_data{env}curated_cmd.cmd_cust_segment").alias("seg"), f.col("c.segment_id") == f.col("seg.id"), "left" ).join( branches_rba.alias("br"), f.col("c.branch") == f.col("br.unit_bmrs_code_c"), "left" ).join( spark.table(f"draif.rbua_data{env}curated_cmd.cmd_fm_finmon").alias("fm"), f.col("p.cust_id") == f.col("fm.cust_id"), "left" ).join( spark.table(f"draif.rbua_data{env}curated_cmd.cmd_norkom").alias("n"), f.col("p.cust_id") == f.col("n.cust_id"), "left" ).join( newest_dates.alias("nd"), f.col("p.cust_id") == f.col("nd.cust_id"), "left" ).join( spark.table(f"draif.rbua_data{env}curated_cmd.cmd_cust_block").alias("cb"), (f.col("c.id") == f.col("cb.cust_id")) & (f.col("cb.ctime") == f.col("nd.max_ctime")), "left" ).join( addresses.alias("adr"), f.col("p.cust_id") == f.col("adr.cust_id"), "left" ).join( spark.table(f"draif.rbua_data{env}curated_cmd.cmd_z_fm_public").alias("zfm"), f.col("fm.public_person") == f.col("zfm.id"), "left" ).join( spark.table(f"draif.rbua_data{env}_curated_cmd.cmd_reg_data").alias("reg"), f.col("p.cust_id") == f.col("reg.cust_id"), ).where( ~f.col("p.reg_code").like("0000000%") ).select( f.col("p.cust_id").alias("cmd_id"), f.col("p.reg_code").alias("taxcode"), f.col("cb.mes").alias("comment"), f.col("adr.address_re"), f.col("adr.address_pr"), f.col("p.name_full").alias("full_name"), f.col("p.name_short").alias("short_name"), f.col("reg.state_reg_date").alias("birth_date"), f.when( (f.col("c.BLOCK") == 0) & (f.col("c.STATUS") == 0), "Yellow" ).when( (f.col("c.BLOCK") == 0) & (f.col("c.STATUS") == 10), "Green" ).when( f.col("c.BLOCK") == 1, "Red" ).otherwise( "N/A" ).alias("status_cmd"), f.col("c.branch").alias("br_code"), f.col("zfm.descr").alias("rel_to_pep"), f.col("br.UNIT_AVALbranchNAMES").alias("branch"), f.col("br.REGION_NAME").alias("dir"), f.col("seg.code_business").alias("seg_code"), f.col("seg.name").alias("segment"), f.when( f.col("c.SUBSEGMENT_ID") == 1, "Business Mass" ).when( f.col("c.SUBSEGMENT_ID") == 2, "Business TOP-Mass" ).when( f.col("c.SUBSEGMENT_ID") == 3, "Business Premium" ).when( f.col("c.SUBSEGMENT_ID") == 4, "Business Direct" ).otherwise( "N/A" ).alias("subsegment"), f.when( f.col("c.type_id") == 1, "ЮО" ).when( f.col("c.type_id") == 2, "ФОП" ).when( f.col("c.type_id") == 3, "ФО" ).when( f.col("c.type_id") == 4, "Банки" ).when( f.col("c.type_id") == 6, "Уряд" ).otherwise( "N/A" ).alias("type"), f.col("fm.date_last_ident"), f.col("fm.date_next_ident"), f.when( f.col("n.aml") == '1', "Low" ).when( f.col("n.aml") == '2', "Medium" ).when( f.col("n.aml") == '3', "High" ).when( f.col("n.aml") == '4', "Very High" ).otherwise( "None" ).alias("risk_cmd"), f.col("fm.work_place"), f.col("fm.work_post") ).distinct()
+    df_cmd_le = cmd_profile_legal.alias("p") \
+        .join(
+        cmd_customer.alias("c"),
+        f.col("p.cust_id") == f.col("c.id"),
+        "left"
+    ).join(
+        cmd_cust_segment.alias("seg"),
+        f.col("c.segment_id") == f.col("seg.id"),
+        "left"
+    ).join(
+        branches_rba.alias("br"),
+        f.col("c.branch") == f.col("br.unit_bmrs_code_c"),
+        "left"
+    ).join(
+        cmd_fm_finmon.alias("fm"),
+        f.col("p.cust_id") == f.col("fm.cust_id"),
+        "left"
+    ).join(
+        cmd_norkom.alias("n"),
+        f.col("p.cust_id") == f.col("n.cust_id"),
+        "left"
+    ).join(
+        newest_dates.alias("nd"),
+        f.col("p.cust_id") == f.col("nd.cust_id"),
+        "left"
+    ).join(
+        cmd_cust_block.alias("cb"),
+        (f.col("c.id") == f.col("cb.cust_id")) &
+        (f.col("cb.ctime") == f.col("nd.max_ctime")),
+        "left"
+    ).join(
+        addresses.alias("adr"),
+        f.col("p.cust_id") == f.col("adr.cust_id"),
+        "left"
+    ).join(
+        cmd_z_fm_public.alias("zfm"),
+        f.col("fm.public_person") == f.col("zfm.id"),
+        "left"
+    ).join(
+        cmd_reg_data.alias("reg"),
+        f.col("p.cust_id") == f.col("reg.cust_id"),
+        "left"
+    ).where(
+        ~f.col("p.reg_code").like("0000000%")
+    ).select(
+        f.col("p.cust_id").alias("cmd_id"),
+        f.col("p.reg_code").alias("taxcode"),
+        f.col("cb.mes").alias("comment"),
+        f.col("adr.address_re"),
+        f.col("adr.address_pr"),
+        f.col("p.name_full").alias("full_name"),
+        f.col("p.name_short").alias("short_name"),
+        f.col("reg.state_reg_date").alias("birth_date"),
+        f.when(
+            (f.col("c.BLOCK") == 0) & (f.col("c.STATUS") == 0),
+            "Yellow"
+        ).when(
+            (f.col("c.BLOCK") == 0) & (f.col("c.STATUS") == 10),
+            "Green"
+        ).when(
+            f.col("c.BLOCK") == 1,
+            "Red"
+        ).otherwise(
+            "N/A"
+        ).alias("status_cmd"),
+        f.col("c.branch").alias("br_code"),
+        f.col("zfm.descr").alias("rel_to_pep"),
+        f.col("br.UNIT_AVALbranchNAMES").alias("branch"),
+        f.col("br.REGION_NAME").alias("dir"),
+        f.col("seg.code_business").alias("seg_code"),
+        f.col("seg.name").alias("segment"),
+        f.when(
+            f.col("c.SUBSEGMENT_ID") == 1,
+            "Business Mass"
+        ).when(
+            f.col("c.SUBSEGMENT_ID") == 2,
+            "Business TOP-Mass"
+        ).when(
+            f.col("c.SUBSEGMENT_ID") == 3,
+            "Business Premium"
+        ).when(
+            f.col("c.SUBSEGMENT_ID") == 4,
+            "Business Direct"
+        ).otherwise(
+            "N/A"
+        ).alias("subsegment"),
+        f.when(
+            f.col("c.type_id") == 1,
+            "ЮО"
+        ).when(
+            f.col("c.type_id") == 2,
+            "ФОП"
+        ).when(
+            f.col("c.type_id") == 3,
+            "ФО"
+        ).when(
+            f.col("c.type_id") == 4,
+            "Банки"
+        ).when(
+            f.col("c.type_id") == 6,
+            "Уряд"
+        ).otherwise(
+            "N/A"
+        ).alias("type"),
+        f.col("fm.date_last_ident"),
+        f.col("fm.date_next_ident"),
+        f.when(
+            f.col("n.aml") == '1',
+            "Low"
+        ).when(
+            f.col("n.aml") == '2',
+            "Medium"
+        ).when(
+            f.col("n.aml") == '3',
+            "High"
+        ).when(
+            f.col("n.aml") == '4',
+            "Very High"
+        ).otherwise(
+            "None"
+        ).alias("risk_cmd"),
+        f.col("fm.work_place"),
+        f.col("fm.work_post")
+    ).distinct()
